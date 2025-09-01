@@ -1,10 +1,10 @@
-"""Flask para crear APIs web, request para peticion HTTP,jsonify convierte datos python en JSON """
+""" Flask framework para crear aplicaciones web, request Para recibir información que nos envían,jsonify  Para enviar respuestas en formato JSON  """
 from flask import Flask, request,jsonify
 from datetime import datetime # Para trabajar con fechas y horas
 import sqlite3
 import json # para manejar datos en formato JSON 
 
-app = Flask(__name__) # Crea instancia de la app Flask.Es como decir "Hola mundo"
+app = Flask(__name__) # Crea instancia de la app Flask.Es como decir "voy a empezar a construir mi aplicación web""
 
 # Toquens validos para autenticar servicios que envian logs
 VALID_TOKENS = {
@@ -53,21 +53,23 @@ def save_log_to_db(log_data):
         log_data['service'],
         log_data['severity'],
         log_data['message'],
-        datetime.now().isoformat()
+        datetime.now().isoformat() # Obtiene la hora y fecha actual en formato texto
     ))
 
     conn.commit()
     conn.close()
 
+"""Funcion que busca logs aplicando filtros"""
 def get_logs_from_db(filters):
     """RECUPERA LOGS DE LA BD CON FILTROS OPCIONALES"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    query = "SELECT * FROM logs WHERE 1=1"
+    query = "SELECT * FROM logs WHERE 1=1" # Para poder añadir condiciones facilmente con AND
     params = []
 
     # Aplicar filtros
+    """Si piden logs desde cierta fecha añade esa condicion"""
     if 'timestamp_start' in filters:
         query += "AND timestamp >= ?"
         params.append(filters['timestamp_start'])
@@ -99,3 +101,79 @@ def get_logs_from_db(filters):
 
     conn.close()
 
+
+    #Formatear resultados
+    resultado = []
+    for log in logs:
+        resultado.append({
+                'id': log[0],
+                'timestamp': log[1],
+                'service': log[2],
+                'severity': log[3],
+                'message': log[4],
+                'received_at': log[5]
+            })
+    
+    return resultado
+
+"""Define una ruta o endpoint en la web"""
+@app.route('/logs', methods=['POST'])
+
+def receive_log():
+    
+    # Verificar autorizacion y rechaza si no es válida
+    auth_header = request.headers.get('Authorization')
+    if not validacion_token(auth_header):
+        return jsonify({"error": "Quién sos, bro?"}), 401
+    
+    # Obtiene los datos enviados en formato JSON
+    data = request.get_json()
+    if not data or 'logs' not in data:
+        return jsonify({"error": "Formato inválido. Se espera {'logs': []}"}), 400
+    
+    # Procesar cada log
+    for log in data['logs']:
+        # Validar campos requeridos
+        required_fields = ['timestamp', 'service', 'severity', 'message']
+        if not all(field in log for field in required_fields):
+            continue  # Saltar log inválido
+        
+        # Guardar en base de datos
+        save_log_to_db(log)
+    
+    return jsonify({"message": "Logs recibidos correctamente"}), 200
+
+"""Otra ruta para el mismo URL pero en metodo GET(consultar logs)"""
+@app.route('/logs', methods=['GET'])
+
+def get_logs():
+    
+    filters = {} # Prepara un diccionario vacio para los filtros
+    
+    # Recoger filtros de los parámetros de consulta
+    if 'timestamp_start' in request.args:
+        filters['timestamp_start'] = request.args['timestamp_start']
+    
+    if 'timestamp_end' in request.args:
+        filters['timestamp_end'] = request.args['timestamp_end']
+        
+    if 'received_at_start' in request.args:
+        filters['received_at_start'] = request.args['received_at_start']
+        
+    if 'received_at_end' in request.args:
+        filters['received_at_end'] = request.args['received_at_end']
+        
+    if 'service' in request.args:
+        filters['service'] = request.args['service']
+        
+    if 'severity' in request.args:
+        filters['severity'] = request.args['severity']
+    
+    # Obtener logs
+    logs = get_logs_from_db(filters)
+    
+    return jsonify({"logs": logs, "count": len(logs)}), 200
+
+if __name__ == '__main__':
+    init_database()
+    app.run(debug=True, port=5000)
